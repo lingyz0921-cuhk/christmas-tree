@@ -63,49 +63,47 @@ export default function App() {
     setUploadedPhotos(photos);
   };
 
-  return (
-    // 最外层 div 占据整个视口，并设置为相对定位，以便其子元素的绝对定位
-    <div className="w-full h-screen relative bg-gradient-to-b from-black via-[#001a0d] to-[#0a2f1e] overflow-hidden"> 
-      <ErrorBoundary>
-        {/* Canvas 绝对定位并填充整个父容器，确保它是主背景 */}
-        <Canvas
-          className="absolute inset-0 z-0" // !!! 关键修改：绝对定位，z-index 设为 0 确保在最底层 !!!
-          dpr={[1, 2]}
-          camera={{ position: [0, 4, 20], fov: 45 }}
-          gl={{ antialias: false, stencil: false, alpha: false }}
-          shadows
-        >
-          <Suspense fallback={null}>
-            <Experience mode={mode} handPosition={handPosition} uploadedPhotos={uploadedPhotos} />
-          </Suspense>
-        </Canvas>
-      </ErrorBoundary>
-      
-      {/* Loader, UIOverlay, GestureController 等 UI 元素也需要合理定位，避免遮挡或挤压 Canvas */}
-      <Loader 
-        // 适当调整 Loader 的 z-index 和定位，确保它在 Canvas 上方
-        containerStyles={{ background: '#000', position: 'absolute', inset: '0', zIndex: 10 }} // 添加定位和z-index
-        innerStyles={{ width: '300px', height: '10px', background: '#333' }}
-        barStyles={{ background: '#D4AF37', height: '10px' }}
-        dataStyles={{ color: '#D4AF37', fontFamily: 'Cinzel' }}
-      />
-      
-      <UIOverlay 
-        mode={mode} 
-        onToggle={toggleMode} 
-        onPhotosUpload={handlePhotosUpload} 
-        hasPhotos={uploadedPhotos.length > 0} 
-        // 确保 UIOverlay 也绝对定位，不影响 Canvas 布局
-        className="absolute inset-0 z-20" // 添加定位和z-index
-      />
-      
-      {/* Gesture Control Module 已经有 fixed 定位，但我们也要检查它的 z-index，确保它在其他 UI 元素上方 */}
-      <GestureController 
-        currentMode={mode} 
-        onModeChange={setMode} 
-        onHandPosition={handleHandPosition} 
-        // GestureController 的 div 已经有 fixed top-4 right-4 z-40，这应该足够了
-      />
-    </div>
-  );
-}
+  // App.tsx
+// ...
+return (
+  <div className="w-full h-screen relative bg-gradient-to-b from-black via-[#001a0d] to-[#0a2f1e] overflow-hidden"> 
+    <ErrorBoundary>
+      {/* 直接让 Canvas 成为 ErrorBoundary 的唯一子元素，并使用 className="absolute inset-0 z-0" */}
+      <Canvas
+        className="absolute inset-0 z-0" // 确保 Canvas 绝对定位并填充整个父容器
+        dpr={[1, 2]} // 可以尝试 [1, 1] 进一步优化性能
+        camera={{ position: [0, 4, 20], fov: 45 }}
+        gl={{ antialias: false, stencil: false, alpha: false }}
+        shadows // 性能优化时考虑注释掉
+        // 如果你想让 Canvas 强制占据更多空间，可以尝试添加 style={{ width: '100%', height: '100%' }}
+        // 但 className="absolute inset-0" 应该已经实现了
+      >
+        <Suspense fallback={null}>
+          <Experience mode={mode} handPosition={handPosition} uploadedPhotos={uploadedPhotos} />
+        </Suspense>
+      </Canvas>
+    </ErrorBoundary>
+    
+    {/* Loader, UIOverlay, GestureController 保持在 Canvas 的兄弟位置，并使用绝对/固定定位 */}
+    <Loader 
+      containerStyles={{ background: '#000', position: 'absolute', inset: '0', zIndex: 10 }}
+      innerStyles={{ width: '300px', height: '10px', background: '#333' }}
+      barStyles={{ background: '#D4AF37', height: '10px' }}
+      dataStyles={{ color: '#D4AF37', fontFamily: 'Cinzel' }}
+    />
+    
+    <UIOverlay 
+      mode={mode} 
+      onToggle={toggleMode} 
+      onPhotosUpload={handlePhotosUpload} 
+      hasPhotos={uploadedPhotos.length > 0} 
+      className="absolute inset-0 z-20 flex flex-col justify-between" // 添加 flex 布局和 justify-between
+    />
+    
+    <GestureController 
+      currentMode={mode} 
+      onModeChange={setMode} 
+      onHandPosition={handleHandPosition} 
+    />
+  </div>
+);
