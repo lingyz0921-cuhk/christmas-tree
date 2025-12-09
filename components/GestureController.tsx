@@ -145,45 +145,70 @@ const predictWebcam = useCallback(async () => {
 
   // startWebcam 函数 - 负责获取摄像头视频流并启动 MediaPipe 预测循环
   // 使用 useCallback 确保此函数的引用在渲染之间是稳定的
-  const startWebcam = useCallback(async () => {
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setGestureStatus("Webcam not supported by browser");
-        return;
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 320, height: 240, facingMode: "user" } // 捕获前置摄像头
-      });
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        
-        // !!! 关键修正 !!!
-        // 显式调用 play() 来启动视频播放。
-        // `await` 确保视频尝试播放后再继续。
-        await videoRef.current.play(); 
-        
-        // !!! 关键修正 !!!
-        // 只有当视频数据加载完成并准备好播放时，才开始 MediaPipe 的预测循环
-        // 使用 { once: true } 确保事件监听器只触发一次，避免重复启动预测
-        videoRef.current.addEventListener("loadeddata", () => {
-          console.log("Webcam video loaded and playing. Starting MediaPipe prediction...");
-          predictWebcam(); // 在这里启动预测循环
-        }, { once: true });
-
-        setGestureStatus("Ready - Show your hand");
-      }
-    } catch (err: any) {
-      console.error("Webcam error:", err);
-      if (err.name === 'NotAllowedError') {
-        setGestureStatus("Please allow camera access");
-      } else {
-        setGestureStatus(`Webcam error: ${err.message || err.name}`);
-      }
+  // GestureController.tsx - startWebcam 函数
+const startWebcam = useCallback(async () => {
+  console.log("Attempting to start webcam..."); // <-- 新增日志
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setGestureStatus("Webcam not supported by browser");
+      console.log("Webcam not supported.");
+      return;
     }
-  }, [predictWebcam]); // startWebcam 的依赖项是 predictWebcam
 
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 320, height: 240, facingMode: "user" }
+    });
+    
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+      console.log("Webcam stream assigned to video element.");
+      
+      await videoRef.current.play(); 
+      console.log("Video element play() called.");
+
+      videoRef.current.addEventListener("loadeddata", () => {
+        console.log("Webcam video loaded and playing. Starting MediaPipe prediction...");
+        predictWebcam();
+      }, { once: true });
+      
+      console.log("Loadeddata event listener added.");
+
+      setGestureStatus("Ready - Show your hand");
+      console.log("Gesture status set to Ready.");
+    } else {
+      console.log("Video ref current is null, cannot start webcam.");
+    }
+  } catch (err: any) {
+    console.error("Webcam error:", err);
+    if (err.name === 'NotAllowedError') {
+      setGestureStatus("Please allow camera access");
+    } else {
+      setGestureStatus(`Webcam error: ${err.message || err.name}`);
+    }
+  }
+}, []); // <-- 确保这里是空依赖数组
+```在 `GestureController.tsx` 的 `useEffect` 内部，`setup` 函数结束时，在 `startWebcam()` 调用之后，添加一个日志：
+
+```typescript
+// GestureController.tsx - 主 useEffect 钩子
+useEffect(() => {
+  const setup = async () => {
+    // ...
+          console.log("MediaPipe HandLandmarker initialized successfully!");
+          startWebcam(); 
+          console.log("setup() finished, startWebcam called."); // <-- 新增日志
+        } catch (error) {
+          // ...
+        }
+      }
+    };
+
+    setup(); 
+
+    return () => {
+      // ... 清理函数 ...
+    };
+  }, []); // <-- 确保这里是空依赖数组
 
   // useEffect 钩子 - 仅在组件首次挂载时初始化 MediaPipe 和摄像头
   useEffect(() => {
