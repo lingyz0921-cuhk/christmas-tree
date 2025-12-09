@@ -6,6 +6,7 @@ interface UIOverlayProps {
   onToggle: () => void;
   onPhotosUpload: (photos: string[]) => void;
   hasPhotos: boolean;
+  className?: string; 
 }
 
 export const UIOverlay: React.FC<UIOverlayProps> = ({ mode, onToggle, onPhotosUpload, hasPhotos }) => {

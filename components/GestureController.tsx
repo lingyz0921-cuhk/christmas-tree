@@ -1,7 +1,10 @@
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { FilesetResolver, HandLandmarker, DrawingUtils } from '@mediapipe/tasks-vision'; // 确保 DrawingUtils 在这里
+import { TreeMode } from '../types'; // 确保你的 TreeMode 类型定义正确
 
-import React, { useEffect, useRef, useState } from 'react';
-import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
-import { TreeMode } from '../types';
+// 定义一个 HandLandmarker 实例的全局引用，确保它只被初始化一次
+// 或者在组件内部使用 useRef，这里我们选择 useRef
+// let handLandmarkerGlobal: HandLandmarker | null = null; // 如果你想作为真正的单例
 
 interface GestureControllerProps {
   onModeChange: (mode: TreeMode) => void;
@@ -9,302 +12,268 @@ interface GestureControllerProps {
   onHandPosition?: (x: number, y: number, detected: boolean) => void;
 }
 
-export const GestureController: React.FC<GestureControllerProps> = ({ onModeChange, currentMode, onHandPosition }) => {
+export const GestureController: React.FC<GestureControllerProps> = ({ 
+  onModeChange, 
+  currentMode, 
+  onHandPosition 
+}) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [isLoaded, setIsLoaded] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null); // 这个 canvas 仍然是隐藏的，可能用于调试
   const [gestureStatus, setGestureStatus] = useState<string>("Initializing...");
-  const [handPos, setHandPos] = useState<{ x: number; y: number } | null>(null);
-  const lastModeRef = useRef<TreeMode>(currentMode);
+  const [handDetected, setHandDetected] = useState(false);
   
-  // Debounce logic refs
+  // 使用 useRef 来持有 HandLandmarker 实例和 requestAnimationFrame ID，
+  // 确保它们在组件的整个生命周期中保持引用，并且不会在重新渲染时被重新创建。
+  const handLandmarkerRef = useRef<HandLandmarker | null>(null);
+  const animationFrameIdRef = useRef<number | null>(null);
+  
+  // 用于手势识别的帧计数器
   const openFrames = useRef(0);
   const closedFrames = useRef(0);
-  const CONFIDENCE_THRESHOLD = 5; // Number of consecutive frames to confirm gesture
+  const CONFIDENCE_THRESHOLD = 5; // 连续多少帧才能确认手势
 
-  useEffect(() => {
-    let handLandmarker: HandLandmarker | null = null;
-    let animationFrameId: number;
+  // predictWebcam 函数 - 处理每一帧的视频数据并进行手势识别
+  // 使用 useCallback 确保此函数的引用在渲染之间是稳定的
+const predictWebcam = useCallback(async () => {
+  // console.log("Inside predictWebcam function."); // 调试时可以保留或移除
 
-    const setupMediaPipe = async () => {
-      try {
-        // Use jsDelivr CDN (accessible in China)
-        const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
-        );
+  const videoElement = videoRef.current;
+  const landmarker = handLandmarkerRef.current;
+  const canvasElement = canvasRef.current; // 获取 canvas 元素
 
-        // Use local model file to avoid loading from Google Storage (blocked in China)
-        // Model file should be downloaded using: npm run download-model or download-model.bat/.sh
-        handLandmarker = await HandLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: `/models/hand_landmarker.task`,
-            delegate: "GPU"
-          },
-          runningMode: "VIDEO",
-          numHands: 1
-        });
+  if (!videoElement || !landmarker || videoElement.readyState < 2 || !canvasElement) {
+    animationFrameIdRef.current = requestAnimationFrame(predictWebcam);
+    return;
+  }
 
-        startWebcam();
-      } catch (error) {
-        console.error("Error initializing MediaPipe:", error);
-        console.warn("Gesture control is unavailable. The app will still work without it.");
-        setGestureStatus("Gesture control unavailable");
-        // Don't block the app if gesture control fails
-      }
-    };
+  const canvasCtx = canvasElement.getContext("2d");
+  if (!canvasCtx) {
+    console.error("Could not get 2D context for canvas.");
+    animationFrameIdRef.current = requestAnimationFrame(predictWebcam);
+    return;
+  }
 
-    const startWebcam = async () => {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 320, height: 240, facingMode: "user" }
-          });
-          
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-            videoRef.current.addEventListener("loadeddata", predictWebcam);
-            setIsLoaded(true);
-            setGestureStatus("Waiting for hand...");
-          }
-        } catch (err) {
-          console.error("Error accessing webcam:", err);
-          setGestureStatus("Permission Denied");
-        }
-      }
-    };
+  // 调整 canvas 尺寸以匹配视频尺寸，确保绘制准确
+  canvasElement.width = videoElement.videoWidth;
+  canvasElement.height = videoElement.videoHeight;
+  canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height); // 清除上一帧的绘制
 
-    const drawHandSkeleton = (landmarks: any[]) => {
-      if (!canvasRef.current || !videoRef.current) return;
-      
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+  try {
+    const results = await landmarker.detectForVideo(videoElement, Date.now());
 
-      // Set canvas size to match video
-      canvas.width = videoRef.current.videoWidth;
-      canvas.height = videoRef.current.videoHeight;
+    if (results.landmarks && results.landmarks.length > 0) {
+      setHandDetected(true);
+      const drawingUtils = new DrawingUtils(canvasCtx); // 初始化 DrawingUtils
 
-      // Clear canvas
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // Hand connections (MediaPipe hand model)
-      const connections = [
-        // Thumb
-        [0, 1], [1, 2], [2, 3], [3, 4],
-        // Index finger
-        [0, 5], [5, 6], [6, 7], [7, 8],
-        // Middle finger
-        [0, 9], [9, 10], [10, 11], [11, 12],
-        // Ring finger
-        [0, 13], [13, 14], [14, 15], [15, 16],
-        // Pinky
-        [0, 17], [17, 18], [18, 19], [19, 20],
-        // Palm
-        [5, 9], [9, 13], [13, 17]
-      ];
-
-      // Draw connections (lines)
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = '#D4AF37'; // Gold color
-      connections.forEach(([start, end]) => {
-        const startPoint = landmarks[start];
-        const endPoint = landmarks[end];
-        
-        ctx.beginPath();
-        ctx.moveTo(startPoint.x * canvas.width, startPoint.y * canvas.height);
-        ctx.lineTo(endPoint.x * canvas.width, endPoint.y * canvas.height);
-        ctx.stroke();
-      });
-
-      // Draw landmarks (points)
-      landmarks.forEach((landmark, index) => {
-        const x = landmark.x * canvas.width;
-        const y = landmark.y * canvas.height;
-        
-        ctx.beginPath();
-        ctx.arc(x, y, 3, 0, 2 * Math.PI);
-        
-        // Use green for all points
-        ctx.fillStyle = '#228B22'; // Forest green color
-        ctx.fill();
-        
-        // Add outline
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = 0.5;
-        ctx.stroke();
-      });
-    };
-
-    const predictWebcam = () => {
-      if (!handLandmarker || !videoRef.current) return;
-
-      const startTimeMs = performance.now();
-      if (videoRef.current.videoWidth > 0) { // Ensure video is ready
-        const result = handLandmarker.detectForVideo(videoRef.current, startTimeMs);
-
-        if (result.landmarks && result.landmarks.length > 0) {
-          const landmarks = result.landmarks[0];
-          drawHandSkeleton(landmarks);
-          detectGesture(landmarks);
-        } else {
-            setGestureStatus("No hand detected");
-            setHandPos(null); // Clear hand position when no hand detected
-            if (onHandPosition) {
-              onHandPosition(0.5, 0.5, false); // No hand detected
-            }
-            // Clear canvas when no hand detected
-            if (canvasRef.current) {
-              const ctx = canvasRef.current.getContext('2d');
-              if (ctx) {
-                ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-              }
-            }
-            // Reset counters if hand is lost? 
-            // Better to keep them to prevent flickering if hand blips out for 1 frame
-            openFrames.current = Math.max(0, openFrames.current - 1);
-            closedFrames.current = Math.max(0, closedFrames.current - 1);
-        }
+      for (const landmarks of results.landmarks) {
+        // 绘制连接线 (骨架)
+        drawingUtils.drawConnectors(landmarks, HandLandmarker.HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 5 });
+        // 绘制关键点 (节点)
+        drawingUtils.drawLandmarks(landmarks, { color: '#FF0000', lineWidth: 2 });
       }
 
-      animationFrameId = requestAnimationFrame(predictWebcam);
-    };
+      const landmarks = results.landmarks[0]; // 获取第一只手（如果有的话）的关键点
+      // ... (计算 centerX, centerY 和 onHandPosition 逻辑不变) ...
+      let centerX = 0;
+      let centerY = 0;
+      for (const landmark of landmarks) {
+        centerX += landmark.x;
+        centerY += landmark.y;
+      }
+      centerX /= landmarks.length;
+      centerY /= landmarks.length;
 
-    const detectGesture = (landmarks: any[]) => {
-      // 0 is Wrist
-      // Tips: 8 (Index), 12 (Middle), 16 (Ring), 20 (Pinky)
-      // Bases (MCP): 5, 9, 13, 17
-      
-      const wrist = landmarks[0];
-      
-      // Calculate palm center (average of wrist and finger bases)
-      // Finger bases (MCP joints): 5, 9, 13, 17
-      const palmCenterX = (landmarks[0].x + landmarks[5].x + landmarks[9].x + landmarks[13].x + landmarks[17].x) / 5;
-      const palmCenterY = (landmarks[0].y + landmarks[5].y + landmarks[9].y + landmarks[13].y + landmarks[17].y) / 5;
-      
-      // Send hand position for camera control
-      // Normalize coordinates: x and y are in [0, 1], center at (0.5, 0.5)
-      setHandPos({ x: palmCenterX, y: palmCenterY });
       if (onHandPosition) {
-        onHandPosition(palmCenterX, palmCenterY, true);
+        // MediaPipe 的坐标是归一化 (0-1) 的
+        onHandPosition(centerX, centerY, true);
       }
-      
-      const fingerTips = [8, 12, 16, 20];
-      const fingerBases = [5, 9, 13, 17];
-      
-      let extendedFingers = 0;
 
-      for (let i = 0; i < 4; i++) {
-        const tip = landmarks[fingerTips[i]];
-        const base = landmarks[fingerBases[i]];
-        
-        // Calculate distance from wrist to tip vs wrist to base
-        const distTip = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
-        const distBase = Math.hypot(base.x - wrist.x, base.y - wrist.y);
-        
-        // Heuristic: If tip is significantly further from wrist than base, it's extended
-        if (distTip > distBase * 1.5) { // 1.5 multiplier is a safe heuristic for extension
-          extendedFingers++;
-        }
-      }
-      
-      // Thumb check (Tip 4 vs Base 2)
-      const thumbTip = landmarks[4];
-      const thumbBase = landmarks[2];
-      const distThumbTip = Math.hypot(thumbTip.x - wrist.x, thumbTip.y - wrist.y);
-      const distThumbBase = Math.hypot(thumbBase.x - wrist.x, thumbBase.y - wrist.y);
-      if (distThumbTip > distThumbBase * 1.2) extendedFingers++;
 
-      // DECISION
-      if (extendedFingers >= 4) {
-        // OPEN HAND -> UNLEASH (CHAOS)
+      // !!! 手势识别逻辑保持不变 !!!
+      const indexTip = landmarks[8];
+      const indexPIP = landmarks[6];
+      const middleTip = landmarks[12];
+      const middlePIP = landmarks[10];
+
+      const indexOpen = indexTip.y < indexPIP.y;
+      const middleOpen = middleTip.y < middlePIP.y;
+
+      if (indexOpen && middleOpen) {
         openFrames.current++;
         closedFrames.current = 0;
-        
-        setGestureStatus("Detected: OPEN (Unleash)");
 
-        if (openFrames.current > CONFIDENCE_THRESHOLD) {
-            if (lastModeRef.current !== TreeMode.CHAOS) {
-                lastModeRef.current = TreeMode.CHAOS;
-                onModeChange(TreeMode.CHAOS);
-            }
-        }
-
-      } else if (extendedFingers <= 1) {
-        // CLOSED FIST -> RESTORE (FORMED)
-        closedFrames.current++;
-        openFrames.current = 0;
-        
-        setGestureStatus("Detected: CLOSED (Restore)");
-
-        if (closedFrames.current > CONFIDENCE_THRESHOLD) {
-            if (lastModeRef.current !== TreeMode.FORMED) {
-                lastModeRef.current = TreeMode.FORMED;
-                onModeChange(TreeMode.FORMED);
-            }
+        if (openFrames.current > CONFIDENCE_THRESHOLD && currentMode === TreeMode.FORMED) {
+          onModeChange(TreeMode.CHAOS);
+          setGestureStatus("✨ CHAOS MODE ✨");
+          console.log("Switching to CHAOS mode!"); // 新增日志
+          openFrames.current = 0;
         }
       } else {
-        // Ambiguous
-        setGestureStatus("Detected: ...");
+        closedFrames.current++;
         openFrames.current = 0;
-        closedFrames.current = 0;
+
+        if (closedFrames.current > CONFIDENCE_THRESHOLD && currentMode === TreeMode.CHAOS) {
+          onModeChange(TreeMode.FORMED);
+          setGestureStatus("🎄 FORMED MODE 🎄");
+          console.log("Switching to FORMED mode!"); // 新增日志
+          closedFrames.current = 0;
+        }
+      }
+    } else {
+      setHandDetected(false);
+      if (onHandPosition) {
+        onHandPosition(0.5, 0.5, false);
+      }
+      setGestureStatus("No hand detected - Show your hand");
+      openFrames.current = 0;
+      closedFrames.current = 0;
+      
+      // 没有手时，清除 canvas 上的绘制
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    }
+  } catch (error) {
+    console.error("Prediction error:", error);
+    // 发生错误时也清除 canvas
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+  }
+
+  setTimeout(() => { // <-- 新增：使用 setTimeout 限制帧率
+    animationFrameIdRef.current = requestAnimationFrame(predictWebcam);
+  }, 60); // <-- 60ms 延迟，大约 16 FPS。可以根据卡顿情况调整此值（例如 80ms, 100ms）
+}, [currentMode, onModeChange, onHandPosition]); // 依赖项 // 依赖项
+
+
+  // startWebcam 函数 - 负责获取摄像头视频流并启动 MediaPipe 预测循环
+  // 使用 useCallback 确保此函数的引用在渲染之间是稳定的
+  const startWebcam = useCallback(async () => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setGestureStatus("Webcam not supported by browser");
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 320, height: 240, facingMode: "user" } // 捕获前置摄像头
+      });
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        
+        // !!! 关键修正 !!!
+        // 显式调用 play() 来启动视频播放。
+        // `await` 确保视频尝试播放后再继续。
+        await videoRef.current.play(); 
+        
+        // !!! 关键修正 !!!
+        // 只有当视频数据加载完成并准备好播放时，才开始 MediaPipe 的预测循环
+        // 使用 { once: true } 确保事件监听器只触发一次，避免重复启动预测
+        videoRef.current.addEventListener("loadeddata", () => {
+          console.log("Webcam video loaded and playing. Starting MediaPipe prediction...");
+          predictWebcam(); // 在这里启动预测循环
+        }, { once: true });
+
+        setGestureStatus("Ready - Show your hand");
+      }
+    } catch (err: any) {
+      console.error("Webcam error:", err);
+      if (err.name === 'NotAllowedError') {
+        setGestureStatus("Please allow camera access");
+      } else {
+        setGestureStatus(`Webcam error: ${err.message || err.name}`);
+      }
+    }
+  }, [predictWebcam]); // startWebcam 的依赖项是 predictWebcam
+
+
+  // useEffect 钩子 - 仅在组件首次挂载时初始化 MediaPipe 和摄像头
+  useEffect(() => {
+    const setup = async () => {
+      // 仅当 handLandmarker 尚未初始化时才执行
+      if (!handLandmarkerRef.current) { 
+        try {
+          console.log("Initializing MediaPipe HandLandmarker...");
+
+          // 使用官方提供的 WASM 路径
+          const vision = await FilesetResolver.forVisionTasks(
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
+          );
+
+          // 使用官方提供的模型路径 (托管在 storage.googleapis.com)
+          handLandmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+              delegate: "GPU" // 尝试使用 GPU 加速，如果不支持则会自动回退
+            },
+            runningMode: "VIDEO", // 设置为 VIDEO 模式以处理视频流
+            numHands: 1 // 检测一只手
+          });
+
+          console.log("MediaPipe HandLandmarker initialized successfully!");
+          startWebcam(); // MediaPipe 初始化成功后才启动摄像头
+        } catch (error) {
+          console.error("Error initializing MediaPipe:", error);
+          setGestureStatus("Hand detection unavailable due to MediaPipe error");
+          handLandmarkerRef.current = null; // 初始化失败，重置引用
+        }
       }
     };
 
-    setupMediaPipe();
+    setup(); // 调用初始化函数
 
+    // 清理函数：在组件卸载时释放所有资源
     return () => {
-      cancelAnimationFrame(animationFrameId);
-      if (handLandmarker) handLandmarker.close();
+      console.log("Cleaning up GestureController...");
+      // 取消任何待处理的 requestAnimationFrame
+      if (animationFrameIdRef.current) {
+        cancelAnimationFrame(animationFrameIdRef.current);
+      }
+      // 关闭 MediaPipe Landmarker 实例
+      if (handLandmarkerRef.current) {
+        handLandmarkerRef.current.close();
+        handLandmarkerRef.current = null;
+        console.log("MediaPipe HandLandmarker closed.");
+      }
+      // 停止摄像头视频流
+      if (videoRef.current?.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach(track => track.stop());
+        videoRef.current.srcObject = null;
+        console.log("Webcam stream stopped.");
+      }
     };
-  }, [onModeChange]);
+  }, [startWebcam]); // 依赖 startWebcam，因为它在 MediaPipe 初始化后被调用
 
-  // Sync ref with prop updates to prevent overriding in closure
-  useEffect(() => {
-    lastModeRef.current = currentMode;
-  }, [currentMode]);
 
+  // JSX 渲染部分 (与你提供的基本一致)
   return (
-    <div className="absolute top-6 right-[8%] z-50 flex flex-col items-end pointer-events-none">
-
-      
-      {/* Camera Preview Frame */}
-      <div className="relative w-[18.75vw] h-[14.0625vw] border-2 border-[#D4AF37] rounded-lg overflow-hidden shadow-[0_0_20px_rgba(212,175,55,0.3)] bg-black">
-        {/* Decorative Lines */}
-        <div className="absolute inset-0 border border-[#F5E6BF]/20 m-1 rounded-sm z-10"></div>
-        
+    <div className="fixed top-4 right-4 z-40 w-80 bg-black/70 border border-[#D4AF37] p-3 rounded">
+      <div className="relative mb-3 bg-black rounded overflow-hidden">
         <video
           ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className={`w-full h-full object-cover transform -scale-x-100 transition-opacity duration-1000 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
+          width={320} // 设置视频宽度
+          height={240} // 设置视频高度
+          className="w-full aspect-video object-cover"
+          playsInline // 在 iOS 上自动播放
+          muted // 静音视频
+          autoPlay // 自动播放（但我们仍然需要手动调用 .play()）
         />
-        
-        {/* Canvas for hand skeleton overlay */}
         <canvas
           ref={canvasRef}
-          className="absolute inset-0 w-full h-full object-cover transform -scale-x-100 pointer-events-none z-20"
+          width={320}
+          height={240}
+          className="absolute top-0 left-0 w-full h-full object-contain pointer-events-none" // 保持隐藏，除非你需要绘制调试信息
         />
-        
-        {/* Hand Position Debug */}
-        {/* {handPos && (
-          <div className="absolute top-2 left-2 text-[10px] text-[#D4AF37] bg-black/70 px-2 py-1 rounded font-mono">
-            X: {handPos.x.toFixed(2)} Y: {handPos.y.toFixed(2)}
-          </div>
-        )} */}
-        
-        {/* Hand Position Indicator */}
-        {handPos && (
-          <div 
-            className="absolute w-2 h-2 bg-[#D4AF37] rounded-full border border-white"
-            style={{
-              left: `${(1 - handPos.x) * 100}%`,
-              top: `${handPos.y * 100}%`,
-              transform: 'translate(-50%, -50%)'
-            }}
-          />
-        )}
-    
+        <div className={`absolute top-2 left-2 text-xs px-2 py-1 rounded font-bold ${handDetected ? 'bg-green-500/70' : 'bg-red-500/70'}`}>
+          {handDetected ? '✓ 手已检测' : '✗ 未检测'}
+        </div>
+      </div>
+
+      <div className="text-center text-[#D4AF37] font-serif text-sm">
+        <p className="font-bold mb-1">{gestureStatus}</p>
+        <div className="text-xs opacity-70 space-y-1">
+          <p>张开手指 → CHAOS 🌪️</p>
+          <p>握拳 → FORMED 🎄</p>
+        </div>
       </div>
     </div>
   );
