@@ -65,11 +65,11 @@ export default function App() {
 
   return (
     // 最外层 div 占据整个视口，并设置为相对定位，以便其子元素的绝对定位
-    <div className="w-full h-screen relative bg-gradient-to-b from-black via-[#001a0d] to-[#0a2f1e] overflow-hidden"> 
+    <div className="fixed inset-0 w-screen h-screen overflow-hidden bg-gradient-to-b from-black via-[#001a0d] to-[#0a2f1e]">
+
       <ErrorBoundary>
         {/* Canvas 绝对定位并填充整个父容器，确保它是主背景 */}
-        <Canvas
-          className="absolute inset-0 z-0" // !!! 关键修改：绝对定位，z-index 设为 0 确保在最底层 !!!
+        <Canvas className="absolute inset-0 w-full h-full !block z-0"// !!! 关键修改：绝对定位，z-index 设为 0 确保在最底层 !!!
           dpr={[1, 2]}
           camera={{ position: [0, 4, 20], fov: 45 }}
           gl={{ antialias: false, stencil: false, alpha: false }}
@@ -94,10 +94,10 @@ export default function App() {
         mode={mode} 
         onToggle={toggleMode} 
         onPhotosUpload={handlePhotosUpload} 
-        hasPhotos={uploadedPhotos.length > 0} 
-        // 确保 UIOverlay 也绝对定位，不影响 Canvas 布局
-        className="absolute inset-0 z-20" // 添加定位和z-index
+        hasPhotos={uploadedPhotos.length > 0}
+        className="pointer-events-none absolute inset-0 z-30"
       />
+
       
       {/* Gesture Control Module 已经有 fixed 定位，但我们也要检查它的 z-index，确保它在其他 UI 元素上方 */}
       <GestureController 

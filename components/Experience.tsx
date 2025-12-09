@@ -63,6 +63,21 @@ export const Experience: React.FC<ExperienceProps> = ({ mode, handPosition, uplo
       controls.update();
     }
   });
+  // 🎄 根据手势模式让树动起来
+  useFrame((state, delta) => {
+    const group = state.scene.getObjectByName("tree-group");
+    if (!group) return;
+
+    if (mode === TreeMode.CHAOS) {
+      group.rotation.y += delta * 1.2;        // 旋转快
+      group.position.x = Math.sin(Date.now() * 0.003) * 0.5;
+      group.position.z = Math.cos(Date.now() * 0.003) * 0.5;
+    } else {
+      group.rotation.y += delta * 0.2;        // 轻柔旋转
+      group.position.x *= 0.9;               // 慢慢回中
+      group.position.z *= 0.9;
+    }
+  });
 
   return (
     <>
@@ -95,7 +110,7 @@ export const Experience: React.FC<ExperienceProps> = ({ mode, handPosition, uplo
         castShadow
       />
 
-      <group position={[0, -5, 0]}>
+      <group name="tree-group" position={[0, -5, 0]}>
         <Foliage mode={mode} count={12000} />
         <Ornaments mode={mode} count={600} />
         <Polaroids mode={mode} uploadedPhotos={uploadedPhotos} />
@@ -123,3 +138,4 @@ export const Experience: React.FC<ExperienceProps> = ({ mode, handPosition, uplo
     </>
   );
 };
+

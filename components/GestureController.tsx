@@ -245,8 +245,14 @@ const predictWebcam = useCallback(async () => {
 
 
   // JSX 渲染部分 (与你提供的基本一致)
+console.log("GestureController rendered 🟢");
+console.log("HandLandmarker status:", handLandmarkerRef.current);
+
   return (
-    <div className="fixed top-4 right-4 z-40 w-80 bg-black/70 border border-[#D4AF37] p-3 rounded">
+  <div className="fixed top-4 right-4 z-[9999] w-80
+    bg-black/70 border border-[#D4AF37] p-3 rounded-lg
+    pointer-events-auto shadow-[0_0_20px_#D4AF37]">
+
       <div className="relative mb-3 bg-black rounded overflow-hidden">
         <video
           ref={videoRef}
