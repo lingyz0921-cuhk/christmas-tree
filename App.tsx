@@ -95,7 +95,7 @@ export default function App() {
         onToggle={toggleMode} 
         onPhotosUpload={handlePhotosUpload} 
         hasPhotos={uploadedPhotos.length > 0}
-        className="pointer-events-none absolute inset-0 z-30"
+        className="pointer-events-none absolute inset-0 z-[9999]"
       />
 
       
